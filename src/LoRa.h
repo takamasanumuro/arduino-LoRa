@@ -22,113 +22,120 @@
 #else
 #define LORA_DEFAULT_SPI           SPI
 #define LORA_DEFAULT_SPI_FREQUENCY 8E6 
-#define LORA_DEFAULT_SS_PIN        10
-#define LORA_DEFAULT_RESET_PIN     9
-#define LORA_DEFAULT_DIO0_PIN      2
+#define LORA_DEFAULT_SS_PIN        10   //Default values for Arduino board, not ESP32  
+#define LORA_DEFAULT_RESET_PIN     9    //Default values for Arduino board, not ESP32  
+#define LORA_DEFAULT_DIO0_PIN      2    //Default values for Arduino board, not ESP32  
 #endif
 
-#define PA_OUTPUT_RFO_PIN          0
-#define PA_OUTPUT_PA_BOOST_PIN     1
+#define PA_OUTPUT_RFO_PIN          0 // Up to 17dBm
+#define PA_OUTPUT_PA_BOOST_PIN     1 // Use this for 20dBm output, but return loss / SWR must be lower than 3.0 on the antenna port.
 
 class LoRaClass : public Stream {
 public:
-  LoRaClass();
+    LoRaClass();
 
-  int begin(long frequency);
-  void end();
+    int begin(long frequency);
+    void end();
 
-  int beginPacket(int implicitHeader = false);
-  int endPacket(bool async = false);
+    int beginPacket(int implicitHeader = false);
+    int endPacket(bool async = false);
 
-  int parsePacket(int size = 0);
-  int packetRssi();
-  float packetSnr();
-  long packetFrequencyError();
+    int parsePacket(int size = 0);
+    int packetRssi();
+    float packetSnr();
+    long packetFrequencyError();
 
-  int rssi();
+    int rssi();
 
-  // from Print
-  virtual size_t write(uint8_t byte);
-  virtual size_t write(const uint8_t *buffer, size_t size);
+    // Implementation of the virtual methods below allow you to use this library similar to a Serial object,
+    // preserving the same access syntax, such as print() and println(). This reduces repetition of code and
+    // creates an abstraction layer between the application and the physical layer, allowing you to switch
+    // between different physical layers without changing the application code. 
 
-  // from Stream
-  virtual int available();
-  virtual int read();
-  virtual int peek();
-  virtual void flush();
+    // from Print
+    virtual size_t write(uint8_t byte);
+    virtual size_t write(const uint8_t *buffer, size_t size);
 
-#ifndef ARDUINO_SAMD_MKRWAN1300
-  void onReceive(void(*callback)(int));
-  void onCadDone(void(*callback)(boolean));
-  void onTxDone(void(*callback)());
+    // from Stream
+    virtual int available();
+    virtual int read();
+    virtual int peek();
+    virtual void flush();
 
-  void receive(int size = 0);
-  void channelActivityDetection(void);
-#endif
-  void idle();
-  void sleep();
+  #ifndef ARDUINO_SAMD_MKRWAN1300
+    // Attach a callback function to be called when DIO0 interrupt occurs. It is better than polling the register.
 
-  void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
-  void setFrequency(long frequency);
-  void setSpreadingFactor(int sf);
-  void setSignalBandwidth(long sbw);
-  void setCodingRate4(int denominator);
-  void setPreambleLength(long length);
-  void setSyncWord(int sw);
-  void enableCrc();
-  void disableCrc();
-  void enableInvertIQ();
-  void disableInvertIQ();
-  void enableLowDataRateOptimize();
-  void disableLowDataRateOptimize();
-  
-  void setOCP(uint8_t mA); // Over Current Protection control
-  
-  void setGain(uint8_t gain); // Set LNA gain
+    void onReceive(void(*callback)(int));     //Indicates that a packet was received with the size of the packet.
+    void onCadDone(void(*callback)(boolean)); //When true, switch to LoRa RX mode to receive the packet or do not transmit to avoid collision.
+    void onTxDone(void(*callback)());         //Make sure to enable async mode when endPacket() is called
 
-  // deprecated
-  void crc() { enableCrc(); }
-  void noCrc() { disableCrc(); }
+    void receive(int size = 0);
+    void channelActivityDetection(void); //Start detecting preambles on the channel. It saves power before fully entering RX mode.
+  #endif
+    void idle();
+    void sleep();
 
-  byte random();
+    void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
+    void setFrequency(long frequency);
+    void setSpreadingFactor(int sf);
+    void setSignalBandwidth(long sbw);
+    void setCodingRate4(int denominator);
+    void setPreambleLength(long length);
+    void setSyncWord(int sw);
+    void enableCrc();
+    void disableCrc();
+    void enableInvertIQ();
+    void disableInvertIQ();
+    void enableLowDataRateOptimize();
+    void disableLowDataRateOptimize();
+    
+    void setOCP(uint8_t mA); // Over Current Protection control
+    
+    void setGain(uint8_t gain); // Set LNA gain
 
-  void setPins(int ss = LORA_DEFAULT_SS_PIN, int reset = LORA_DEFAULT_RESET_PIN, int dio0 = LORA_DEFAULT_DIO0_PIN);
-  void setSPI(SPIClass& spi);
-  void setSPIFrequency(uint32_t frequency);
+    // deprecated
+    void crc() { enableCrc(); }
+    void noCrc() { disableCrc(); }
 
-  void dumpRegisters(Stream& out);
+    byte random();
 
-private:
-  void explicitHeaderMode();
-  void implicitHeaderMode();
+    void setPins(int ss = LORA_DEFAULT_SS_PIN, int reset = LORA_DEFAULT_RESET_PIN, int dio0 = LORA_DEFAULT_DIO0_PIN);
+    void setSPI(SPIClass& spi);
+    void setSPIFrequency(uint32_t frequency);
 
-  void handleDio0Rise();
-  bool isTransmitting();
-
-  int getSpreadingFactor();
-  long getSignalBandwidth();
-
-  void setLdoFlag();
-  void setLdoFlagForced(const boolean);
-
-  uint8_t readRegister(uint8_t address);
-  void writeRegister(uint8_t address, uint8_t value);
-  uint8_t singleTransfer(uint8_t address, uint8_t value);
-
-  static void onDio0Rise();
+    void dumpRegisters(Stream& out);
 
 private:
-  SPISettings _spiSettings;
-  SPIClass* _spi;
-  int _ss;
-  int _reset;
-  int _dio0;
-  long _frequency;
-  int _packetIndex;
-  int _implicitHeaderMode;
-  void (*_onReceive)(int);
-  void (*_onCadDone)(boolean);
-  void (*_onTxDone)();
+    void explicitHeaderMode();
+    void implicitHeaderMode();
+
+    void handleDio0Rise();
+    bool isTransmitting();
+
+    int getSpreadingFactor();
+    long getSignalBandwidth();
+
+    void setLdoFlag();
+    void setLdoFlagForced(const boolean);
+
+    uint8_t readRegister(uint8_t address);
+    void writeRegister(uint8_t address, uint8_t value);
+    uint8_t singleTransfer(uint8_t address, uint8_t value);
+
+    static void onDio0Rise();
+
+private:
+    SPISettings _spiSettings;
+    SPIClass* _spi;
+    int _ss;
+    int _reset;
+    int _dio0;
+    long _frequency;
+    int _packetIndex;
+    int _implicitHeaderMode;
+    void (*_onReceive)(int);
+    void (*_onCadDone)(boolean);
+    void (*_onTxDone)();
 };
 
 extern LoRaClass LoRa;
