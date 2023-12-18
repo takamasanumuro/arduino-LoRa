@@ -63,16 +63,23 @@ public:
     virtual void flush();
 
   #ifndef ARDUINO_SAMD_MKRWAN1300
-    // Attach a callback function to be called when DIO0 interrupt occurs. It is better than polling the register.
 
-    void onReceive(void(*callback)(int));     //Indicates that a packet was received with the size of the packet.
-    void onCadDone(void(*callback)(boolean)); //When true, switch to LoRa RX mode to receive the packet or do not transmit to avoid collision.
-    void onTxDone(void(*callback)());         //Make sure to enable async mode when endPacket() is called
+    // Attach a callback function to be called when DIO0 interrupt occurs. It is better than polling the register.
+    //Indicates that a packet was received with the size of the packet.
+    void onReceive(void(*callback)(int));     
+    
+    // Attach a callback function to be called when DIO0 interrupt occurs. It is better than polling the register.
+    //When true, switch to LoRa RX mode to receive the packet or do not transmit to avoid collision.
+    void onCadDone(void(*callback)(boolean)); 
+    
+    // Attach a callback function to be called when DIO0 interrupt occurs. It is better than polling the register.
+    //Make sure to enable async mode when endPacket() is called
+    void onTxDone(void(*callback)());         
 
     void receive(int size = 0);
     void channelActivityDetection(void); //Start detecting preambles on the channel. It saves power before fully entering RX mode.
   #endif
-    void idle();
+    void standby();
     void sleep();
 
     void setTxPower(int level, int outputPin = PA_OUTPUT_PA_BOOST_PIN);
@@ -133,6 +140,7 @@ private:
     long _frequency;
     int _packetIndex;
     int _implicitHeaderMode;
+    // The client can attach callbacks to be called when DIO0 interrupt occurs. It is better than polling the register.
     void (*_onReceive)(int);
     void (*_onCadDone)(boolean);
     void (*_onTxDone)();

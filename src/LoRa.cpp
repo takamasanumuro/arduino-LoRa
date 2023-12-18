@@ -3,40 +3,43 @@
 
 #include <LoRa.h>
 
-// Registers name and address
+// The SX1276 offers a number of configuration and status registers which can be accessed via the SPI interface.
+// The following are the register addresses of the SX1276 that are used in this library.
+// Registers name and address. Check the datasheet for specific bitfields description.
+
 #define REG_FIFO                 0x00 // FIFO address pointer in TX and RX mode. It is cleared and not accessible in Sleep mode.
-#define REG_OP_MODE              0x01
+#define REG_OP_MODE              0x01 //Lora vs FSK/OOK mode selection and access to shared registers
 #define REG_FRF_MSB              0x06 //MSB of RF carrier frequency
 #define REG_FRF_MID              0x07 //Middle byte of RF carrier frequency
 #define REG_FRF_LSB              0x08 //LSB of RF carrier frequency
 #define REG_PA_CONFIG            0x09 //Power amplifier config
 #define REG_OCP                  0x0B //Over current protection control
 #define REG_LNA                  0x0C //Low noise amplifier settings
-#define REG_FIFO_ADDR_PTR        0x0D //SPI interface address pointer in FIFO data buffer. The data stored/read from this address depends on FIFO_TX_BASE_ADDR and FIFO_RX_BASE_ADDR
+#define REG_FIFO_ADDR_PTR        0x0D //Location pointer in FIFO data buffer for TX/RX operations. Before any TX/RX operation, it must be set to the corresponding base address.
 #define REG_FIFO_TX_BASE_ADDR    0x0E //Write base address in FIFO data buffer for TX modulator
 #define REG_FIFO_RX_BASE_ADDR    0x0F //Read base address in FIFO data buffer for RX demodulator
-#define REG_FIFO_RX_CURRENT_ADDR 0x10 
+#define REG_FIFO_RX_CURRENT_ADDR 0x10 //Indicates the location of the last packet received in the FIFO
 #define REG_IRQ_FLAGS            0x12 //Interrupt flags for TX and RX events, which can be polled or interrupt driven via DIO0 pin.
 #define REG_RX_NB_BYTES          0x13 //Number of payload bytes of latest packet received for explicit header mode.
 #define REG_PKT_SNR_VALUE        0x19 //Average SNR of last packet received (dB)
 #define REG_PKT_RSSI_VALUE       0x1A //Average RSSI of last packet received
 #define REG_RSSI_VALUE           0x1B //Instantaneous RSSI value of the last packet received
-#define REG_MODEM_CONFIG_1       0x1D
-#define REG_MODEM_CONFIG_2       0x1E
-#define REG_PREAMBLE_MSB         0x20
-#define REG_PREAMBLE_LSB         0x21
-#define REG_PAYLOAD_LENGTH       0x22
-#define REG_MODEM_CONFIG_3       0x26
-#define REG_FREQ_ERROR_MSB       0x28
-#define REG_FREQ_ERROR_MID       0x29
-#define REG_FREQ_ERROR_LSB       0x2A
-#define REG_RSSI_WIDEBAND        0x2C
-#define REG_DETECTION_OPTIMIZE   0x31
+#define REG_MODEM_CONFIG_1       0x1D //Bandwidth, coding rate, and header mode settings
+#define REG_MODEM_CONFIG_2       0x1E //Spreading factor, TX continuous mode, CRC, and RX timeout MSB
+#define REG_PREAMBLE_MSB         0x20 //MSB of set preamble length
+#define REG_PREAMBLE_LSB         0x21 //LSB of set preamble length
+#define REG_PAYLOAD_LENGTH       0x22 //Indicates how many bytes are queued for transmission in the FIFO
+#define REG_MODEM_CONFIG_3       0x26 //Low data rate optimization setting and AGC auto on/off control
+#define REG_FREQ_ERROR_MSB       0x28 //Estimated frequency error MSB
+#define REG_FREQ_ERROR_MID       0x29 //Estimated frequency error middle byte
+#define REG_FREQ_ERROR_LSB       0x2A //Estimated frequency error LSB
+#define REG_RSSI_WIDEBAND        0x2C //Can be used to generate a random number between 0 and 255 using the RSSI noise floor as a source of entropy
+#define REG_DETECTION_OPTIMIZE   0x31 //Detection optimization when using Spreading Factor 6
 #define REG_INVERTIQ             0x33 //Invert LoRa I and Q signals
 #define REG_DETECTION_THRESHOLD  0x37 //RSSI detection threshold for receiver
-#define REG_SYNC_WORD            0x39
+#define REG_SYNC_WORD            0x39 //Register that stores the network ID. Both transmitter and receiver must have the same network ID.
 #define REG_INVERTIQ2            0x3B
-#define REG_DIO_MAPPING_1        0x40
+#define REG_DIO_MAPPING_1        0x40 //Mapping of pins DIO0 to DIO3, with DIO0 occupying bits [7-6]
 #define REG_VERSION              0x42 //Semtech ID relating the silicon revision
 #define REG_PA_DAC               0x4D //Higher power settings of the PA
 
@@ -44,19 +47,19 @@
 #define MODE_LONG_RANGE_MODE     BIT(7) // 0 = FSK/OOK mode, 1 = LoRa mode. This can only be set in SLEEP mode.
 
 //Bitfield [2-0] from RegOpMode(0x01)
-#define MODE_CAD                 0b111
-#define MODE_RX_SINGLE           0b110
-#define MODE_RX_CONTINUOUS       0b101
-#define MODE_FSRX				 0b100
-#define MODE_TX                  0b011
-#define MODE_FSTX				 0b010
-#define MODE_STDBY               0b001
-#define MODE_SLEEP               0b000
+#define MODE_CAD                 0b111 // Modem is checking for preamble symbols to detected activity while using less power than RX modes.
+#define MODE_RX_SINGLE           0b110 // Reception blocks are powered up until a valid packet is received. Then returns to STANDBY mode.
+#define MODE_RX_CONTINUOUS       0b101 // Reception blocks are powered, processing all received data until user requests change of mode.
+#define MODE_FSRX				 0b100 // Frequency synthesis RX mode. PLL is locked and active at receive frequency. RF part is off.
+#define MODE_TX                  0b011 // Transmission blocks are powered, the PA is being ramnped, the packet is transmitted and returns to STANDBY mode.
+#define MODE_FSTX				 0b010 // Frequency synthesis TX mode. PLL is locked and active at transmit frequency. RF part is off.
+#define MODE_STDBY               0b001 // Both crystal oscillator and Lora baseband blocks are enabled. RF and PLLs are disabled.
+#define MODE_SLEEP               0b000 // Low power mode with only SPI and config registers acessible. Lora FIFO is not accessible.
 
-// Power amplifier config for RegPaConfig(0x09)
+// Power amplifier config for RegPaConfig(0x09) to set 20dBm output power on
 #define PA_BOOST 	BIT(7)
 
-// IRQ positions for reading RegIrqFLags(0x12) register
+// IRQ positions for reading RegIrqFLags(0x12) register, which contains multiple bits that are set when certain modem events occur.
 // Polling can be done by reading this register and checking if any of these bits are high
 // However, using interrupts on DIO0 pin is a better way to do it as it does not waste CPU cycles
 // If you want to disable any of these interrupts, the same positions can be used to set the bits
@@ -72,12 +75,18 @@
 #define IRQ_FHSS_CHANGE_CHANNEL_MASK 	BIT(1)
 #define IRQ_CAD_DETECTED_MASK      		BIT(0)
 
+// DIO0 function is mapped on bits [7-6] of RegDioMapping1(0x40) register.
+// It is used to map the interrupt signal to DIO0 pin,, which can be used to trigger an interrupt on the microcontroller.
 
-#define RF_MID_BAND_THRESHOLD    525E6
+#define DIO_RX_DONE (0b00 << 6)
+#define DIO_TX_DONE (0b01 << 6)
+#define DIO_CAD_DONE (0b10 << 6)
+
+#define RF_MID_BAND_THRESHOLD    5256
 #define RSSI_OFFSET_HF_PORT      157
 #define RSSI_OFFSET_LF_PORT      164
 
-#define MAX_PKT_LENGTH           255
+#define MAX_PKT_LENGTH           255 //FIFO max size
 
 #if (ESP8266 || ESP32)
     #define ISR_PREFIX ICACHE_RAM_ATTR
@@ -163,7 +172,7 @@ int LoRaClass::begin(long frequency)
     setTxPower(17);
 
     // put in standby mode
-    idle();
+    standby();
 
     return 1;
 }
@@ -184,7 +193,7 @@ int LoRaClass::beginPacket(int implicitHeader)
     }
 
     // put in standby mode
-    idle();
+    standby();
 
     if (implicitHeader) {
         implicitHeaderMode();
@@ -201,6 +210,11 @@ int LoRaClass::beginPacket(int implicitHeader)
 
 int LoRaClass::endPacket(bool async)
 {
+
+    //DIO0 function is mapped on bits [7-6] of RegDioMapping1(0x40) register.
+    //0000 0000 => DIO0 => RXDONE
+    //0100 0000 => DIO0 => TXDONE
+    //1000 0000 => DIO0 => CADDONE
   
     if ((async) && (_onTxDone))
         writeRegister(REG_DIO_MAPPING_1, 0x40); // DIO0 => TXDONE
@@ -265,7 +279,7 @@ int LoRaClass::parsePacket(int size)
         writeRegister(REG_FIFO_ADDR_PTR, readRegister(REG_FIFO_RX_CURRENT_ADDR));
 
         // put in standby mode
-        idle();
+        standby();
     } else if (readRegister(REG_OP_MODE) != (MODE_LONG_RANGE_MODE | MODE_RX_SINGLE)) {
         // not currently in RX mode
 
@@ -447,6 +461,8 @@ void LoRaClass::receive(int size)
     writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_RX_CONTINUOUS);
 }
 
+/// @brief Listen to preamble symbol to detect activity on a channel using less power before fully commiting to receive a packet
+/// @param  
 void LoRaClass::channelActivityDetection(void)
 {
     writeRegister(REG_DIO_MAPPING_1, 0x80);// DIO0 => CADDONE
@@ -454,11 +470,16 @@ void LoRaClass::channelActivityDetection(void)
 }
 #endif
 
-void LoRaClass::idle()
+/// @brief Puts the module in standby mode with the FIFO and registers retaining their values.
+/// Writing to the configuration registers must be done in either SLEEP/STANDBY mode
+void LoRaClass::standby()
 {
     writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_STDBY);
 }
 
+/// @brief Puts the module in sleep mode, clearing FIFO buffer, which can't then be accessed in this mode.
+/// Configuration registers can still be read and writing to configuration registers should only be done in SLEEP or STANDBY mode.
+/// This state can be used to save battery power for example.
 void LoRaClass::sleep()
 {
     writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_SLEEP);
@@ -504,7 +525,13 @@ void LoRaClass::setTxPower(int level, int outputPin)
 
 void LoRaClass::setFrequency(long frequency)
 {
+
     _frequency = frequency;
+    
+    //Step frequency of the synthesizer is 61.035 Hz, which is taken by dividing the crystal clock frequency by 2^19,
+    //which is the resolution of the phase accumulator used in the synthesizer.
+    //The formula below then calculates the multiplier value that needs to be written to the registers, such that its product
+    //with the step frequency gives the desired input frequency.
 
     uint64_t frf = ((uint64_t)frequency << 19) / 32000000; // Function is taken from Semtech SX1276/77/78/79 datasheet, p. 85
 
@@ -518,15 +545,18 @@ int LoRaClass::getSpreadingFactor()
   return readRegister(REG_MODEM_CONFIG_2) >> 4;
 }
 
-void LoRaClass::setSpreadingFactor(int sf)
+/// @brief The spreading factor (SF) is a number that determines how wide the signal is spread in the frequency domain.
+/// Higher values increase the signal sensitivity, but decreases the data rate and increases the time on air.
+/// @param spreadingFactor 
+void LoRaClass::setSpreadingFactor(int spreadingFactor)
 {
-    if (sf < 6) {
-        sf = 6;
-    } else if (sf > 12) {
-        sf = 12;
+    if (spreadingFactor < 6) {
+        spreadingFactor = 6;
+    } else if (spreadingFactor > 12) {
+        spreadingFactor = 12;
     }
 
-    if (sf == 6) {
+    if (spreadingFactor == 6) {
         writeRegister(REG_DETECTION_OPTIMIZE, 0xc5);
         writeRegister(REG_DETECTION_THRESHOLD, 0x0c);
     } else {
@@ -534,15 +564,15 @@ void LoRaClass::setSpreadingFactor(int sf)
         writeRegister(REG_DETECTION_THRESHOLD, 0x0a);
     }
 
-    writeRegister(REG_MODEM_CONFIG_2, (readRegister(REG_MODEM_CONFIG_2) & 0x0f) | ((sf << 4) & 0xf0));
+    writeRegister(REG_MODEM_CONFIG_2, (readRegister(REG_MODEM_CONFIG_2) & 0x0f) | ((spreadingFactor << 4) & 0xf0));
     setLdoFlag();
 }
 
 long LoRaClass::getSignalBandwidth()
 {
-    byte bw = (readRegister(REG_MODEM_CONFIG_1) >> 4);
+    byte bandwidth = (readRegister(REG_MODEM_CONFIG_1) >> 4);
 
-    switch (bw) {
+    switch (bandwidth) {
             case 0: return 7.8E3;
             case 1: return 10.4E3;
             case 2: return 15.6E3;
@@ -558,33 +588,33 @@ long LoRaClass::getSignalBandwidth()
     return -1;
 }
 
-void LoRaClass::setSignalBandwidth(long sbw)
+void LoRaClass::setSignalBandwidth(long signalBandwidth)
 {
-    int bw;
+    int bandwidth;
 
-    if (sbw <= 7.8E3) {
-        bw = 0;
-    } else if (sbw <= 10.4E3) {
-        bw = 1;
-    } else if (sbw <= 15.6E3) {
-        bw = 2;
-    } else if (sbw <= 20.8E3) {
-        bw = 3;
-    } else if (sbw <= 31.25E3) {
-        bw = 4;
-    } else if (sbw <= 41.7E3) {
-        bw = 5;
-    } else if (sbw <= 62.5E3) {
-        bw = 6;
-    } else if (sbw <= 125E3) {
-        bw = 7;
-    } else if (sbw <= 250E3) {
-        bw = 8;
-    } else /*if (sbw <= 250E3)*/ {
-        bw = 9;
+    if (signalBandwidth <= 7.8E3) {
+        bandwidth = 0;
+    } else if (signalBandwidth <= 10.4E3) {
+        bandwidth = 1;
+    } else if (signalBandwidth <= 15.6E3) {
+        bandwidth = 2;
+    } else if (signalBandwidth <= 20.8E3) {
+        bandwidth = 3;
+    } else if (signalBandwidth <= 31.25E3) {
+        bandwidth = 4;
+    } else if (signalBandwidth <= 41.7E3) {
+        bandwidth = 5;
+    } else if (signalBandwidth <= 62.5E3) {
+        bandwidth = 6;
+    } else if (signalBandwidth <= 125E3) {
+        bandwidth = 7;
+    } else if (signalBandwidth <= 250E3) {
+        bandwidth = 8;
+    } else /*if (signalBandwidth <= 250E3)*/ {
+        bandwidth = 9;
     }
 
-    writeRegister(REG_MODEM_CONFIG_1, (readRegister(REG_MODEM_CONFIG_1) & 0x0f) | (bw << 4));
+    writeRegister(REG_MODEM_CONFIG_1, (readRegister(REG_MODEM_CONFIG_1) & 0x0f) | (bandwidth << 4));
     setLdoFlag();
 }
 
@@ -594,20 +624,22 @@ void LoRaClass::setLdoFlag()
     long symbolDuration = 1000 / ( getSignalBandwidth() / (1L << getSpreadingFactor()) ) ;
 
     // Section 4.1.1.6
-    boolean ldoOn = symbolDuration > 16;
+    boolean lowDataRateOptimizationOn = symbolDuration > 16;
 
     uint8_t config3 = readRegister(REG_MODEM_CONFIG_3);
-    bitWrite(config3, 3, ldoOn);
+    bitWrite(config3, 3, lowDataRateOptimizationOn);
     writeRegister(REG_MODEM_CONFIG_3, config3);
 }
 
-void LoRaClass::setLdoFlagForced(const boolean ldoOn)
+void LoRaClass::setLdoFlagForced(const boolean lowDataRateOptimizationOn)
 {
     uint8_t config3 = readRegister(REG_MODEM_CONFIG_3);
-    bitWrite(config3, 3, ldoOn);
+    bitWrite(config3, 3, lowDataRateOptimizationOn);
     writeRegister(REG_MODEM_CONFIG_3, config3);
 }
 
+/// @brief Sets the amount of redundant bits to be used for forward error correction, but slows down the data rate.
+/// @param denominator 
 void LoRaClass::setCodingRate4(int denominator)
 {
     if (denominator < 5) {
@@ -616,20 +648,26 @@ void LoRaClass::setCodingRate4(int denominator)
         denominator = 8;
     }
 
-    int cr = denominator - 4;
+    int codingRate = denominator - 4;
 
-    writeRegister(REG_MODEM_CONFIG_1, (readRegister(REG_MODEM_CONFIG_1) & 0xf1) | (cr << 1));
+    writeRegister(REG_MODEM_CONFIG_1, (readRegister(REG_MODEM_CONFIG_1) & 0xf1) | (codingRate << 1));
 }
 
+/// @brief Sets the number of preamble symbols to be transmitted before the payload.
+/// The preamble is used for receiver synchronization and AGC calibration.
+/// @param length 
 void LoRaClass::setPreambleLength(long length)
 {
     writeRegister(REG_PREAMBLE_MSB, (uint8_t)(length >> 8));
     writeRegister(REG_PREAMBLE_LSB, (uint8_t)(length >> 0));
 }
 
-void LoRaClass::setSyncWord(int sw)
+/// @brief Network ID used to filter out packets with dissimilar network IDs.
+/// Transmitter and receiver must share the same network ID.
+/// @param syncWord 
+void LoRaClass::setSyncWord(int syncWord)
 {
-    writeRegister(REG_SYNC_WORD, sw); 
+    writeRegister(REG_SYNC_WORD, syncWord); 
 }
 
 void LoRaClass::enableCrc()
@@ -653,6 +691,7 @@ void LoRaClass::disableInvertIQ()
     writeRegister(REG_INVERTIQ,  0x27);
     writeRegister(REG_INVERTIQ2, 0x1d);
 }
+
 
 void LoRaClass::enableLowDataRateOptimize()
 {
@@ -685,7 +724,7 @@ void LoRaClass::setGain(uint8_t gain)
     }
     
     // set to standby
-    idle();
+    standby();
     
     // set gain
     if (gain == 0) {
@@ -703,18 +742,26 @@ void LoRaClass::setGain(uint8_t gain)
     }
 }
 
+/// @brief Obtain a random byte value using the RSSI noise floor as a source of entropy.
+/// @return 
 byte LoRaClass::random()
 {
     return readRegister(REG_RSSI_WIDEBAND);
 }
 
-void LoRaClass::setPins(int ss, int reset, int dio0)
+/// @brief 
+/// @param slaveSelect Line must be pulled low to initiate SPI transaction and pulled high to end it.
+/// @param reset Pulling this line low resets the SX127x chip in case of a malfunction or hangup
+/// @param dio0 GPIO used to listen for interrupt signal generated by the SX127x chip
+void LoRaClass::setPins(int slaveSelect, int reset, int dio0)
 {
-    _ss = ss;
+    _ss = slaveSelect;
     _reset = reset;
     _dio0 = dio0;
 }
 
+/// @brief Select an instance of a SPIClass object to be used to communicate with the Lora modem
+/// @param spi 
 void LoRaClass::setSPI(SPIClass& spi)
 {
     _spi = &spi;
@@ -725,6 +772,9 @@ void LoRaClass::setSPIFrequency(uint32_t frequency)
     _spiSettings = SPISettings(frequency, MSBFIRST, SPI_MODE0);
 }
 
+/// @brief Dump the values of all registers to any object that implements the Stream interface, such
+// as a HardwareSerial or even the LoRaClass instance itself.
+/// @param out 
 void LoRaClass::dumpRegisters(Stream& out)
 {
     for (int i = 0; i < 128; i++) {
@@ -735,6 +785,7 @@ void LoRaClass::dumpRegisters(Stream& out)
     }
 }
 
+/// @brief This mode must be used when the number of bytes to be received is not known in advance.
 void LoRaClass::explicitHeaderMode()
 {
     _implicitHeaderMode = 0;
@@ -742,6 +793,8 @@ void LoRaClass::explicitHeaderMode()
     writeRegister(REG_MODEM_CONFIG_1, readRegister(REG_MODEM_CONFIG_1) & 0xfe);
 }
 
+/// @brief This mode can be used when the number of bytes to be received is known in advance and remains fixed.
+// It can be used to reduce the time on air of the packet by removing the header overhead.
 void LoRaClass::implicitHeaderMode()
 {
     _implicitHeaderMode = 1;
@@ -751,12 +804,23 @@ void LoRaClass::implicitHeaderMode()
 
 void LoRaClass::handleDio0Rise()
 {
+
+    //Explain the logic behind trhis
+    //There is a dedicated register on the SX127x chip that stores the interrupt flags,
+    //which contains multiple bits that are set when certain events occur.
+    //When that happens, the chip generates a digital signal on the DIO0 pin, on which the microcontroller can listen
+    //for interrupts. When the microcontroller detects a rising edge on the DIO0 pin, it reads the interrupt flags register
+    //to determine which event occurred. It then clears the interrupt flags register and invokes the appropriate callback.
+    //The register can also be polled for, but that would waste CPU cycles in synchronous code.
+
+
     int irqFlags = readRegister(REG_IRQ_FLAGS);
 
     // clear IRQ's
     writeRegister(REG_IRQ_FLAGS, irqFlags);
 
     if ((irqFlags & IRQ_CAD_DONE_MASK) != 0) {
+        //If a callback has been registered, invoke it
         if (_onCadDone) {
             _onCadDone((irqFlags & IRQ_CAD_DETECTED_MASK) != 0);
         }
@@ -772,10 +836,12 @@ void LoRaClass::handleDio0Rise()
             // set FIFO address to current RX address
             writeRegister(REG_FIFO_ADDR_PTR, readRegister(REG_FIFO_RX_CURRENT_ADDR));
 
+            //If a callback has been registered, invoke it
             if (_onReceive) {
                 _onReceive(packetLength);
             }
         } else if ((irqFlags & IRQ_TX_DONE_MASK) != 0) {
+            //If a callback has been registered, invoke it
             if (_onTxDone) {
                 _onTxDone();
             }
@@ -799,8 +865,8 @@ uint8_t LoRaClass::readRegister(uint8_t address)
 /// @param value 
 void LoRaClass::writeRegister(uint8_t address, uint8_t value)
 {
-  // Most significant bit (7) of address byte should be 1 for writing to the register
-  // 0x80 = 0b10000000
+    // Most significant bit (7) of address byte should be 1 for writing to the register
+    // 0x80 = 0b10000000
     singleTransfer(address | 0x80, value);
 }
 
