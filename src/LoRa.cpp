@@ -251,7 +251,7 @@ bool LoRaClass::isTransmitting()
 int LoRaClass::parsePacket(int size)
 {
     int packetLength = 0;
-    int irqFlags = readRegister(REG_IRQ_FLAGS);
+    int interruptRequestFlags = readRegister(REG_IRQ_FLAGS);
 
     if (size > 0) {
         implicitHeaderMode();
@@ -262,9 +262,9 @@ int LoRaClass::parsePacket(int size)
     }
 
     // clear IRQ's
-    writeRegister(REG_IRQ_FLAGS, irqFlags);
+    writeRegister(REG_IRQ_FLAGS, interruptRequestFlags);
 
-    if ((irqFlags & IRQ_RX_DONE_MASK) && (irqFlags & IRQ_PAYLOAD_CRC_ERROR_MASK) == 0) {
+    if ((interruptRequestFlags & IRQ_RX_DONE_MASK) && (interruptRequestFlags & IRQ_PAYLOAD_CRC_ERROR_MASK) == 0) {
         // received a packet
         _packetIndex = 0;
 
@@ -485,42 +485,39 @@ void LoRaClass::sleep()
     writeRegister(REG_OP_MODE, MODE_LONG_RANGE_MODE | MODE_SLEEP);
 }
 
-void LoRaClass::setTxPower(int level, int outputPin)
+void LoRaClass::setTxPower(int level_dbm, int outputPin)
 {
-  if (PA_OUTPUT_RFO_PIN == outputPin) {
-        
-        // RFO pin is limited to +14 dBm
-        if (level < 0) {
-            level = 0;
-        } else if (level > 14) {
-            level = 14;
+    if (PA_OUTPUT_RFO_PIN == outputPin) {
+          
+          // RFO pin is limited to +14 dBm
+          level_dbm < 0 ? level_dbm = 0 : level_dbm > 14 ? level_dbm = 14 : level_dbm = level_dbm;
+          writeRegister(REG_PA_CONFIG, 0x70 | level_dbm);
+          return;
+    } 
+
+    // PA_OUTPUT_PA_BOOST_PIN is being used and requires some extra settings
+    if (level_dbm > 17) {
+        if (level_dbm > 20) {
+            level_dbm = 20;
         }
 
-        writeRegister(REG_PA_CONFIG, 0x70 | level);
-  } else {
-        // PA BOOST
-        if (level > 17) {
-            if (level > 20) {
-                level = 20;
-            }
+        // subtract 3 from level_dbm, so 18 - 20 maps to 15 - 17
+        level_dbm -= 3;
 
-            // subtract 3 from level, so 18 - 20 maps to 15 - 17
-            level -= 3;
-
-            // High Power +20 dBm Operation (Semtech SX1276/77/78/79 5.4.3.)
-            writeRegister(REG_PA_DAC, 0x87);
-            setOCP(140);
-        } else {
-            if (level < 2) {
-                level = 2;
-            }
-            //Default value PA_HF/LF or +17dBm
-            writeRegister(REG_PA_DAC, 0x84);
-            setOCP(100);
+        // High Power +20 dBm Operation (Semtech SX1276/77/78/79 5.4.3.)
+        writeRegister(REG_PA_DAC, 0x87);
+        setOCP(140); //Enable over current protection in mA units
+    } else {
+        if (level_dbm < 2) {
+            level_dbm = 2;
         }
-
-        writeRegister(REG_PA_CONFIG, PA_BOOST | (level - 2));
+        //Default value PA_HF/LF or +17dBm
+        writeRegister(REG_PA_DAC, 0x84);
+        setOCP(100); //Enable over current protection in mA units
     }
+
+    writeRegister(REG_PA_CONFIG, PA_BOOST | (level_dbm - 2));
+    
 }
 
 void LoRaClass::setFrequency(long frequency)
@@ -703,6 +700,7 @@ void LoRaClass::disableLowDataRateOptimize()
     setLdoFlagForced(false);
 }
 
+/// @brief Set the maximum current supply to the power amplifier in mA units.
 void LoRaClass::setOCP(uint8_t mA)
 {
     uint8_t ocpTrim = 27;
@@ -786,6 +784,7 @@ void LoRaClass::dumpRegisters(Stream& out)
 }
 
 /// @brief This mode must be used when the number of bytes to be received is not known in advance.
+/// This mode is used when the receiver does not know the length of the packet in advance.
 void LoRaClass::explicitHeaderMode()
 {
     _implicitHeaderMode = 0;
@@ -794,7 +793,8 @@ void LoRaClass::explicitHeaderMode()
 }
 
 /// @brief This mode can be used when the number of bytes to be received is known in advance and remains fixed.
-// It can be used to reduce the time on air of the packet by removing the header overhead.
+/// It can be used to reduce the time on air of the packet by removing the header overhead.
+/// This leads to a more efficient transmission of packets when size is known in advance.
 void LoRaClass::implicitHeaderMode()
 {
     _implicitHeaderMode = 1;
@@ -805,43 +805,46 @@ void LoRaClass::implicitHeaderMode()
 void LoRaClass::handleDio0Rise()
 {
 
-    //Explain the logic behind trhis
-    //There is a dedicated register on the SX127x chip that stores the interrupt flags,
+    //There is a dedicated register on the SX127x modem that stores the interrupt flags,
     //which contains multiple bits that are set when certain events occur.
-    //When that happens, the chip generates a digital signal on the DIO0 pin, on which the microcontroller can listen
-    //for interrupts. When the microcontroller detects a rising edge on the DIO0 pin, it reads the interrupt flags register
+    //When that happens, the modem generates a digital signal on its DIO0 pin, which is connected via a track to another pin
+    //on the microcontroller, on which an interrupt can be set up. This is a more efficient way of handling the modem's events.
+    //When the microcontroller detects a rising edge on the DIO0 pin, it reads the interrupt flags register
     //to determine which event occurred. It then clears the interrupt flags register and invokes the appropriate callback.
     //The register can also be polled for, but that would waste CPU cycles in synchronous code.
 
+    int interruptRequestFlags = readRegister(REG_IRQ_FLAGS); //MCU reads the interrupt flags from the modem and stores it in the stack
+    writeRegister(REG_IRQ_FLAGS, interruptRequestFlags);     //MCU clears the interrupt flags register on the modem
 
-    int irqFlags = readRegister(REG_IRQ_FLAGS);
+    if ((interruptRequestFlags & IRQ_CAD_DONE_MASK) != 0) {
 
-    // clear IRQ's
-    writeRegister(REG_IRQ_FLAGS, irqFlags);
-
-    if ((irqFlags & IRQ_CAD_DONE_MASK) != 0) {
-        //If a callback has been registered, invoke it
+        //Channel activity detection cycle completed, invoke registered callback with the result
         if (_onCadDone) {
-            _onCadDone((irqFlags & IRQ_CAD_DETECTED_MASK) != 0);
+            _onCadDone((interruptRequestFlags & IRQ_CAD_DETECTED_MASK) != 0);
         }
-    } else if ((irqFlags & IRQ_PAYLOAD_CRC_ERROR_MASK) == 0) {
+    
+    } else if ((interruptRequestFlags & IRQ_PAYLOAD_CRC_ERROR_MASK) == 0) { //Check RX and TX done only if no CRC error is present
 
-        if ((irqFlags & IRQ_RX_DONE_MASK) != 0) {
-            // received a packet
+        if ((interruptRequestFlags & IRQ_RX_DONE_MASK) != 0) {
+
+            // A packet has been received
             _packetIndex = 0;
 
-            // read packet length
+            // Read packet length according to header mode
             int packetLength = _implicitHeaderMode ? readRegister(REG_PAYLOAD_LENGTH) : readRegister(REG_RX_NB_BYTES);
 
-            // set FIFO address to current RX address
+            // Set FIFO address to current RX address
             writeRegister(REG_FIFO_ADDR_PTR, readRegister(REG_FIFO_RX_CURRENT_ADDR));
 
-            //If a callback has been registered, invoke it
+            //Invoke RX callback with the packet length if registered
             if (_onReceive) {
                 _onReceive(packetLength);
             }
-        } else if ((irqFlags & IRQ_TX_DONE_MASK) != 0) {
-            //If a callback has been registered, invoke it
+
+        } else if ((interruptRequestFlags & IRQ_TX_DONE_MASK) != 0) {
+
+            // A packet has been sent
+            //Invoke TX callback if registered
             if (_onTxDone) {
                 _onTxDone();
             }
